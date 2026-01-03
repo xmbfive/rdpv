@@ -9,13 +9,12 @@ jobs:
     timeout-minutes: 3600
 
     steps:
-      - name: Update & Install Dependencies
+      - name: Configure Core RDP Settings
         run: |
+          # Update system and install XRDP + XFCE + netcat
           sudo apt-get update -y
-          sudo apt-get install -y xrdp xfce4 xfce4-terminal wget unzip sudo netcat
+          sudo apt-get install -y xrdp xfce4 xfce4-terminal netcat sudo
 
-      - name: Configure XRDP
-        run: |
           # Set XFCE as default session for xrdp
           echo "startxfce4" > ~/.xsession
           sudo systemctl enable xrdp
@@ -27,7 +26,7 @@ jobs:
 
       - name: Create RDP User with Secure Password
         run: |
-          # Generate a strong random password
+          # Generate strong random password
           PASSWORD=$(< /dev/urandom tr -dc 'A-Za-z0-9!@#$%^&*()_+-=' | head -c16)
           USERNAME="RDP"
           
@@ -43,11 +42,19 @@ jobs:
           curl -fsSL https://tailscale.com/install.sh | sh
           sudo tailscale up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-$GITHUB_RUN_ID
 
-      - name: Get Tailscale IP
+      - name: Establish Tailscale Connection
         run: |
-          TS_IP=$(tailscale ip -4 | head -n1)
+          # Wait for Tailscale to assign an IP
+          TS_IP=""
+          RETRIES=0
+          while [ -z "$TS_IP" ] && [ $RETRIES -lt 10 ]; do
+            TS_IP=$(tailscale ip -4 | head -n1)
+            sleep 5
+            RETRIES=$((RETRIES+1))
+          done
+
           if [ -z "$TS_IP" ]; then
-            echo "Failed to get Tailscale IP"
+            echo "Tailscale IP not assigned. Exiting."
             exit 1
           fi
           echo "TAILSCALE_IP=$TS_IP" >> $GITHUB_ENV
@@ -57,7 +64,7 @@ jobs:
           echo "Tailscale IP: $TAILSCALE_IP"
           nc -zv $TAILSCALE_IP 3389
           if [ $? -ne 0 ]; then
-            echo "RDP port 3389 not reachable"
+            echo "TCP connection to RDP port 3389 failed"
             exit 1
           fi
           echo "TCP connectivity successful!"
@@ -69,8 +76,8 @@ jobs:
           echo "Username: RDP"
           echo "Password: $RDP_CREDS"
           echo "================="
-          
-          # Keep workflow alive indefinitely
+
+          # Keep runner alive indefinitely
           while true; do
             echo "[$(date)] RDP Active - Ctrl+C to terminate"
             sleep 300
